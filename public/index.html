@@ -29,6 +29,16 @@
             font-weight: bold;
             text-shadow: 0 0 5px #00ff00;
         }
+        .complete {
+            color: #00ff00;
+            text-shadow: 0 0 10px #00ff00;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
     </style>
 </head>
 <body>
@@ -70,12 +80,13 @@
             return 1 - (iteration / TOTAL_ITERATIONS);
         }
 
-        function decryptPixelValue(r, g, b, x, y, seed, iteration) {
+        function siftPixelValue(r, g, b, x, y, seed, iteration, channel) {
             const noiseLevel = getNoiseReduction(iteration);
             
-            let baseValue = (r + g + b) / 3;
-            const noiseValue = (noise(x, y, seed) - 0.5) * 255 * noiseLevel;
-            const filteredValue = baseValue + noiseValue;
+            const value = [r, g, b][channel];
+            const channelPhase = (channel / 3) * Math.PI * 2;
+            const noiseValue = (noise(x, y, seed + channel) - 0.5) * 255 * noiseLevel;
+            const filteredValue = value + noiseValue;
             
             return Math.min(Math.max(Math.round(filteredValue), 0), 255);
         }
@@ -92,7 +103,7 @@
                 const originalPixels = new Uint8ClampedArray(imageData.data);
                 const pixels = imageData.data;
 
-                async function decryptFrame(start, end, iteration) {
+                async function siftFrame(start, end, iteration) {
                     for (let i = start; i < end; i += 4) {
                         const x = (i / 4) % canvas.width;
                         const y = Math.floor((i / 4) / canvas.width);
@@ -101,24 +112,28 @@
                         const originalG = originalPixels[i + 1];
                         const originalB = originalPixels[i + 2];
                         
-                        pixels[i] = decryptPixelValue(originalR, originalG, originalB, x, y, seed + 1, iteration);
-                        pixels[i + 1] = decryptPixelValue(originalR, originalG, originalB, x, y, seed + 2, iteration);
-                        pixels[i + 2] = decryptPixelValue(originalR, originalG, originalB, x, y, seed + 3, iteration);
+                        pixels[i] = siftPixelValue(originalR, originalG, originalB, x, y, seed, iteration, 0);
+                        pixels[i + 1] = siftPixelValue(originalR, originalG, originalB, x, y, seed, iteration, 1);
+                        pixels[i + 2] = siftPixelValue(originalR, originalG, originalB, x, y, seed, iteration, 2);
                         pixels[i + 3] = 255;
                     }
                     
                     ctx.putImageData(imageData, 0, 0);
                     
                     if (end < pixels.length) {
-                        requestAnimationFrame(() => decryptFrame(end, end + 1000, iteration));
+                        requestAnimationFrame(() => siftFrame(end, end + 1000, iteration));
                     } else if (iteration < TOTAL_ITERATIONS) {
                         currentIteration++;
                         progressDiv.textContent = `Sifting Pass: ${currentIteration}/${TOTAL_ITERATIONS}`;
-                        setTimeout(() => decryptFrame(0, 1000, currentIteration), 500);
+                        setTimeout(() => siftFrame(0, 1000, currentIteration), 500);
+                    } else {
+                        // Show completion message
+                        progressDiv.textContent = "SIFT COMPLETE";
+                        progressDiv.classList.add('complete');
                     }
                 }
 
-                decryptFrame(0, 1000, currentIteration);
+                siftFrame(0, 1000, currentIteration);
             } catch (error) {
                 console.error('Error processing image:', error);
                 ctx.fillStyle = 'black';
