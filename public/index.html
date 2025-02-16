@@ -29,17 +29,26 @@
             font-weight: bold;
             text-shadow: 0 0 5px #00ff00;
         }
+        .complete {
+            color: #00ff00;
+            text-shadow: 0 0 10px #00ff00;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
     </style>
 </head>
 <body>
     <h1>BABEL SIFT</h1>
     <input type="file" id="fileInput" accept="image/*">
     <canvas id="canvas" width="416" height="640"></canvas>
-    <div id="progress">Sifting Pass: 1/1000</div>
+    <div id="progress">Sifting Pass: 1/10</div>
     <script>
         let currentIteration = 1;
-        const TOTAL_ITERATIONS = 1000;  // Updated to 1000 iterations
-        let isScrambled = false;
+        const TOTAL_ITERATIONS = 10;
 
         function noise(x, y, z) {
             const X = Math.floor(x) & 255;
@@ -57,39 +66,17 @@
             });
         }
 
-        function getAggressiveNoise(iteration, x, y, seed) {
-            const baseNoise = noise(x, y, seed);
-            const phase = (iteration / TOTAL_ITERATIONS) * Math.PI * 2;
-            const intensityMultiplier = Math.sin(phase) * 2 + 2;
-            return (baseNoise - 0.5) * intensityMultiplier;
+        function getNoiseReduction(iteration) {
+            return 1 - (iteration / TOTAL_ITERATIONS);
         }
 
-        function siftPixelValue(value, x, y, seed, iteration, channel) {
-            // Generate aggressive noise
-            const noiseValue = getAggressiveNoise(iteration, x, y, seed + channel);
-            
-            // Apply channel-specific processing
+        function siftPixelValue(r, g, b, x, y, seed, iteration, channel) {
+            const noiseLevel = getNoiseReduction(iteration);
+            const value = [r, g, b][channel];
             const channelPhase = (channel / 3) * Math.PI * 2;
-            const channelShift = Math.sin(channelPhase + iteration) * 30;
-            
-            // Combine original value with noise and channel effects
-            let processed = value + (noiseValue * 255) + channelShift;
-            
-            // Apply non-linear transformation
-            processed = Math.tan(processed * Math.PI / 180) * 30 + processed;
-            
-            return Math.min(Math.max(Math.round(processed), 0), 255);
-        }
-
-        function scramblePixels(pixels) {
-            for (let i = pixels.length - 1; i >= 0; i -= 4) {
-                const randomIndex = Math.floor(Math.random() * pixels.length / 4) * 4;
-                for (let j = 0; j < 4; j++) {
-                    const temp = pixels[i + j];
-                    pixels[i + j] = pixels[randomIndex + j];
-                    pixels[randomIndex + j] = temp;
-                }
-            }
+            const noiseValue = (noise(x, y, seed + channel) - 0.5) * 255 * noiseLevel;
+            const filteredValue = value + noiseValue;
+            return Math.min(Math.max(Math.round(filteredValue), 0), 255);
         }
 
         async function processImage(image) {
@@ -101,57 +88,38 @@
                 ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
                 const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                 const originalPixels = new Uint8ClampedArray(imageData.data);
-                let pixels = imageData.data;
+                const pixels = imageData.data;
 
-                // Instant process for 1000 iterations
-                for (let iteration = 1; iteration <= TOTAL_ITERATIONS; iteration++) {
-                    for (let i = 0; i < pixels.length; i += 4) {
+                async function siftFrame(start, end, iteration) {
+                    for (let i = start; i < end; i += 4) {
                         const x = (i / 4) % canvas.width;
                         const y = Math.floor((i / 4) / canvas.width);
-
+                        
                         const originalR = originalPixels[i];
                         const originalG = originalPixels[i + 1];
                         const originalB = originalPixels[i + 2];
-
-                        pixels[i] = siftPixelValue(originalR, x, y, iteration, iteration, 0);
-                        pixels[i + 1] = siftPixelValue(originalG, x, y, iteration, iteration, 1);
-                        pixels[i + 2] = siftPixelValue(originalB, x, y, iteration, iteration, 2);
+                        
+                        pixels[i] = siftPixelValue(originalR, originalG, originalB, x, y, iteration, iteration, 0);
+                        pixels[i + 1] = siftPixelValue(originalR, originalG, originalB, x, y, iteration, iteration, 1);
+                        pixels[i + 2] = siftPixelValue(originalR, originalG, originalB, x, y, iteration, iteration, 2);
                         pixels[i + 3] = 255;
                     }
-
+                    
                     ctx.putImageData(imageData, 0, 0);
-                    progressDiv.textContent = `Sifting Pass: ${iteration}/${TOTAL_ITERATIONS}`;
-                }
-
-                if (!isScrambled) {
-                    // Scramble pixels and restart with 1000 iterations
-                    scramblePixels(pixels);
-                    isScrambled = true;
-                    progressDiv.textContent = "Sifting Pass: 1/1000";
-                    currentIteration = 1;
-
-                    for (let iteration = 1; iteration <= 1000; iteration++) {
-                        for (let i = 0; i < pixels.length; i += 4) {
-                            const x = (i / 4) % canvas.width;
-                            const y = Math.floor((i / 4) / canvas.width);
-
-                            const originalR = originalPixels[i];
-                            const originalG = originalPixels[i + 1];
-                            const originalB = originalPixels[i + 2];
-
-                            pixels[i] = siftPixelValue(originalR, x, y, iteration, iteration, 0);
-                            pixels[i + 1] = siftPixelValue(originalG, x, y, iteration, iteration, 1);
-                            pixels[i + 2] = siftPixelValue(originalB, x, y, iteration, iteration, 2);
-                            pixels[i + 3] = 255;
-                        }
-
-                        ctx.putImageData(imageData, 0, 0);
-                        progressDiv.textContent = `Sifting Pass: ${iteration}/1000`;
+                    
+                    if (end < pixels.length) {
+                        requestAnimationFrame(() => siftFrame(end, end + 1000, iteration));
+                    } else if (iteration < TOTAL_ITERATIONS) {
+                        currentIteration++;
+                        progressDiv.textContent = `Sifting Pass: ${currentIteration}/${TOTAL_ITERATIONS}`;
+                        setTimeout(() => siftFrame(0, 1000, currentIteration), 500);
+                    } else {
+                        progressDiv.textContent = "SIFT COMPLETE";
+                        progressDiv.classList.add('complete');
                     }
-                } else {
-                    progressDiv.textContent = "SIFT COMPLETE";
-                    progressDiv.classList.add('complete');
                 }
+
+                siftFrame(0, 1000, currentIteration);
             } catch (error) {
                 console.error('Error processing image:', error);
                 ctx.fillStyle = 'black';
@@ -166,7 +134,6 @@
             const file = event.target.files[0];
             if (file) {
                 currentIteration = 1;
-                isScrambled = false;
                 const image = await loadImage(file);
                 processImage(image);
             }
