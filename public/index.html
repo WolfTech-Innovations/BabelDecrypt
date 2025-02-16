@@ -3,67 +3,134 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Babel Image Decryptor</title>
+    <title>Babel Sift</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #1a1a1a;
+            font-family: monospace;
+            color: #00ff00;
+        }
+        h1 {
+            font-size: 2.5em;
+            margin: 20px 0;
+            text-shadow: 0 0 10px #00ff00;
+        }
+        canvas {
+            border: 2px solid #00ff00;
+            margin: 20px;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.2);
+        }
+        #progress {
+            margin-top: 10px;
+            font-size: 1.2em;
+            font-weight: bold;
+            text-shadow: 0 0 5px #00ff00;
+        }
+    </style>
 </head>
 <body>
-    <h1>Babel Image Decryptor</h1>
+    <h1>BABEL SIFT</h1>
     <canvas id="canvas" width="416" height="640"></canvas>
+    <div id="progress">Sifting Pass: 1/10</div>
     <script>
+        let currentIteration = 1;
+        const TOTAL_ITERATIONS = 10;
+
+        function noise(x, y, z) {
+            const X = Math.floor(x) & 255;
+            const Y = Math.floor(y) & 255;
+            const Z = Math.floor(z) & 255;
+            return (X ^ Y ^ Z) / 255;
+        }
+
+        function loadImage(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = "anonymous";
+                img.onload = () => resolve(img);
+                img.onerror = () => reject(new Error('Failed to load image'));
+                img.src = url;
+            });
+        }
+
         async function fetchBabelImage(seed) {
-            const url = `https://babelia.libraryofbabel.info/api/image/${seed}`;
+            const url = `https://babeldecrypt.pages.dev/1.jpeg`;
             try {
-                const response = await fetch(url, {
-                    method: "GET",
-                    headers: {},
-                    credentials: "same-origin"
-                });
-
-                // Check for a successful response
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch image: ${response.statusText}`);
-                }
-
-                const blob = await response.blob();
-                return createImageBitmap(blob);
+                return await loadImage(url);
             } catch (error) {
-                console.error('Error fetching the image:', error.message);
+                console.error('Error loading the image:', error.message);
+                throw error;
             }
         }
 
-        function decryptPixelValue(r, g, b) {
-            return Math.pow(10, 24 * (Math.pow(10, 100) / ((r + g) - (b / 2))));
+        function getNoiseReduction(iteration) {
+            return 1 - (iteration / TOTAL_ITERATIONS);
+        }
+
+        function decryptPixelValue(r, g, b, x, y, seed, iteration) {
+            const noiseLevel = getNoiseReduction(iteration);
+            
+            let baseValue = (r + g + b) / 3;
+            const noiseValue = (noise(x, y, seed) - 0.5) * 255 * noiseLevel;
+            const filteredValue = baseValue + noiseValue;
+            
+            return Math.min(Math.max(Math.round(filteredValue), 0), 255);
         }
 
         async function processImage(seed) {
             const canvas = document.getElementById('canvas');
             const ctx = canvas.getContext('2d');
+            const progressDiv = document.getElementById('progress');
+            
             try {
                 const image = await fetchBabelImage(seed);
-                ctx.drawImage(image, 0, 0);
-
+                ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
                 const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const originalPixels = new Uint8ClampedArray(imageData.data);
                 const pixels = imageData.data;
 
-                async function decryptFrame(start, end) {
+                async function decryptFrame(start, end, iteration) {
                     for (let i = start; i < end; i += 4) {
-                        const decryptedValue = decryptPixelValue(pixels[i], pixels[i + 1], pixels[i + 2]);
-                        pixels[i] = decryptedValue % 256; // R
-                        pixels[i + 1] = (decryptedValue / 256) % 256; // G
-                        pixels[i + 2] = (decryptedValue / (256 * 256)) % 256; // B
+                        const x = (i / 4) % canvas.width;
+                        const y = Math.floor((i / 4) / canvas.width);
+                        
+                        const originalR = originalPixels[i];
+                        const originalG = originalPixels[i + 1];
+                        const originalB = originalPixels[i + 2];
+                        
+                        pixels[i] = decryptPixelValue(originalR, originalG, originalB, x, y, seed + 1, iteration);
+                        pixels[i + 1] = decryptPixelValue(originalR, originalG, originalB, x, y, seed + 2, iteration);
+                        pixels[i + 2] = decryptPixelValue(originalR, originalG, originalB, x, y, seed + 3, iteration);
+                        pixels[i + 3] = 255;
                     }
+                    
                     ctx.putImageData(imageData, 0, 0);
+                    
                     if (end < pixels.length) {
-                        requestAnimationFrame(() => decryptFrame(end, end + 1000));
+                        requestAnimationFrame(() => decryptFrame(end, end + 1000, iteration));
+                    } else if (iteration < TOTAL_ITERATIONS) {
+                        currentIteration++;
+                        progressDiv.textContent = `Sifting Pass: ${currentIteration}/${TOTAL_ITERATIONS}`;
+                        setTimeout(() => decryptFrame(0, 1000, currentIteration), 500);
                     }
                 }
 
-                decryptFrame(0, 1000);
+                decryptFrame(0, 1000, currentIteration);
             } catch (error) {
                 console.error('Error processing image:', error);
+                ctx.fillStyle = 'black';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#00ff00';
+                ctx.font = '16px monospace';
+                ctx.fillText('Error loading image', 20, canvas.height/2);
             }
         }
 
-        processImage(Math.floor(Math.random() * 1e9));
+        const initialSeed = Math.floor(Math.random() * 1e9);
+        processImage(initialSeed);
     </script>
 </body>
 </html>
